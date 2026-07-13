@@ -645,6 +645,7 @@ internal sealed class UsageLogReader
                 if (!root.TryGetProperty("type", out var type) || type.GetString() != "event_msg") continue;
                 if (!root.TryGetProperty("payload", out var payload) || !payload.TryGetProperty("rate_limits", out var limits)) continue;
                 if (!limits.TryGetProperty("primary", out var primary) || !limits.TryGetProperty("secondary", out var secondary)) continue;
+                if (primary.ValueKind != JsonValueKind.Object || secondary.ValueKind != JsonValueKind.Object) continue;
                 if (!TryReadWindow(primary, out var primaryWindow) || !TryReadWindow(secondary, out var secondaryWindow)) continue;
                 var recordedAt = root.TryGetProperty("timestamp", out var timestamp) && DateTimeOffset.TryParse(timestamp.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
                     ? parsed : DateTimeOffset.UtcNow;
@@ -653,6 +654,10 @@ internal sealed class UsageLogReader
             catch (JsonException)
             {
                 // A session can be appended while it is read; skip incomplete JSON lines.
+            }
+            catch (InvalidOperationException)
+            {
+                // Codex may emit transient/null rate_limit entries; skip malformed snapshots.
             }
         }
         return null;

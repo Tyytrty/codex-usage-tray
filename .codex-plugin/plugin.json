@@ -1,6 +1,6 @@
 {
   "name": "codex-usage-tray",
-  "version": "0.1.0+codex.20260711065401",
+  "version": "0.1.0+codex.20260713030226",
   "description": "Windows notification-area monitor for locally recorded Codex usage limits, with dual large-number tray icons, notifications, custom styles, and configurable thresholds.",
   "author": {
     "name": "Local developer"
