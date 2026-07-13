@@ -296,13 +296,13 @@ internal sealed class UsageTrayContext : ApplicationContext
             var current = snapshot.Value;
             if (IsStaleSnapshot(current, out var staleReason))
             {
-                LogDiagnostic($"stale snapshot ignored: {staleReason}; recorded={current.RecordedAt:O}; 5hReset={current.Primary.ResetsAt:O}; 7dReset={current.Secondary.ResetsAt:O}");
+                LogDiagnostic($"stale snapshot ignored: {staleReason}; recorded={current.RecordedAt:O}; has5h={current.HasFiveHour}; 5hReset={(current.HasFiveHour ? current.Primary.ResetsAt.ToString("O") : "n/a")}; 7dReset={current.Secondary.ResetsAt:O}");
                 ShowUnavailable(staleReason);
                 return;
             }
 
             _lastSnapshot = current;
-            _primaryItem.Text = FormatWindow("5h", current.Primary);
+            _primaryItem.Text = current.HasFiveHour ? FormatWindow("5h", current.Primary) : "5h: unavailable in current Codex data";
             _secondaryItem.Text = FormatWindow("7d", current.Secondary);
             _updatedItem.Text = $"Last updated: {current.RecordedAt.LocalDateTime:yyyy-MM-dd HH:mm:ss}";
             UpdateTooltips(current);
@@ -311,7 +311,9 @@ internal sealed class UsageTrayContext : ApplicationContext
             if (_lastLoggedRecordedAt != current.RecordedAt)
             {
                 _lastLoggedRecordedAt = current.RecordedAt;
-                LogDiagnostic($"snapshot {current.RecordedAt:O}; 5h={current.Primary.RemainingPercent:0}%; 7d={current.Secondary.RemainingPercent:0}%");
+                LogDiagnostic(current.HasFiveHour
+                    ? $"snapshot {current.RecordedAt:O}; 5h={current.Primary.RemainingPercent:0}%; 7d={current.Secondary.RemainingPercent:0}%"
+                    : $"snapshot {current.RecordedAt:O}; 5h=unavailable; 7d={current.Secondary.RemainingPercent:0}% (primary-only format)");
             }
         }
         catch (Exception ex)
@@ -325,9 +327,11 @@ internal sealed class UsageTrayContext : ApplicationContext
     {
         var now = DateTimeOffset.Now;
         var age = now - snapshot.RecordedAt.ToLocalTime();
-        if (snapshot.Primary.ResetsAt <= now)
+        var freshnessWindow = snapshot.HasFiveHour ? snapshot.Primary : snapshot.Secondary;
+        if (freshnessWindow.ResetsAt <= now)
         {
-            reason = $"Latest local 5h snapshot expired at {snapshot.Primary.ResetsAt.LocalDateTime:MM-dd HH:mm}";
+            var label = snapshot.HasFiveHour ? "5h" : "weekly";
+            reason = $"Latest local {label} snapshot expired at {freshnessWindow.ResetsAt.LocalDateTime:MM-dd HH:mm}";
             return true;
         }
 
@@ -404,20 +408,30 @@ internal sealed class UsageTrayContext : ApplicationContext
 
     private void UpdateIcon(UsageSnapshot snapshot)
     {
-        _secondaryIcon.Visible = _settings.IconMode == IconDisplayMode.DualNumbers;
+        _secondaryIcon.Visible = _settings.IconMode == IconDisplayMode.DualNumbers && snapshot.HasFiveHour;
+        var limitingRemaining = snapshot.HasFiveHour
+            ? Math.Min(snapshot.Primary.RemainingPercent, snapshot.Secondary.RemainingPercent)
+            : snapshot.Secondary.RemainingPercent;
 
         switch (_settings.IconMode)
         {
             case IconDisplayMode.Ring:
-                ReplaceIcon(_primaryIcon, TrayIconFactory.CreateRing(Math.Min(snapshot.Primary.RemainingPercent, snapshot.Secondary.RemainingPercent), unknown: false, _settings));
+                ReplaceIcon(_primaryIcon, TrayIconFactory.CreateRing(limitingRemaining, unknown: false, _settings));
                 break;
             case IconDisplayMode.Battery:
-                ReplaceIcon(_primaryIcon, TrayIconFactory.CreateBattery(Math.Min(snapshot.Primary.RemainingPercent, snapshot.Secondary.RemainingPercent), unknown: false, _settings));
+                ReplaceIcon(_primaryIcon, TrayIconFactory.CreateBattery(limitingRemaining, unknown: false, _settings));
                 break;
             case IconDisplayMode.DualNumbers:
-                var dualIcons = TrayIconFactory.CreateDualNumbers(snapshot, _settings);
-                ReplaceIcon(_primaryIcon, dualIcons.Primary);
-                ReplaceIcon(_secondaryIcon, dualIcons.Secondary);
+                if (snapshot.HasFiveHour)
+                {
+                    var dualIcons = TrayIconFactory.CreateDualNumbers(snapshot, _settings);
+                    ReplaceIcon(_primaryIcon, dualIcons.Primary);
+                    ReplaceIcon(_secondaryIcon, dualIcons.Secondary);
+                }
+                else
+                {
+                    ReplaceIcon(_primaryIcon, TrayIconFactory.CreateSingleNumber(snapshot.Secondary.RemainingPercent, _settings, "7d"));
+                }
                 break;
             case IconDisplayMode.CustomAssets:
                 ReplaceIcon(_primaryIcon, TrayIconFactory.CreateCustomOrFallback(snapshot, _settings));
@@ -439,9 +453,13 @@ internal sealed class UsageTrayContext : ApplicationContext
     {
         var p = snapshot.Primary;
         var s = snapshot.Secondary;
-        var text = _settings.TooltipMode == TooltipMode.Short
-            ? $"Codex 5h {p.RemainingPercent:0}% | 7d {s.RemainingPercent:0}%"
-            : $"5h {p.RemainingPercent:0}% -> {p.ResetsAt.LocalDateTime:MM-dd HH:mm}; 7d {s.RemainingPercent:0}% -> {s.ResetsAt.LocalDateTime:MM-dd HH:mm}";
+        var text = snapshot.HasFiveHour
+            ? (_settings.TooltipMode == TooltipMode.Short
+                ? $"Codex 5h {p.RemainingPercent:0}% | 7d {s.RemainingPercent:0}%"
+                : $"5h {p.RemainingPercent:0}% -> {p.ResetsAt.LocalDateTime:MM-dd HH:mm}; 7d {s.RemainingPercent:0}% -> {s.ResetsAt.LocalDateTime:MM-dd HH:mm}")
+            : (_settings.TooltipMode == TooltipMode.Short
+                ? $"Codex 7d {s.RemainingPercent:0}% (5h unavailable)"
+                : $"7d {s.RemainingPercent:0}% -> {s.ResetsAt.LocalDateTime:MM-dd HH:mm}; 5h unavailable");
         SetNotifyText(_primaryIcon, text);
         SetNotifyText(_secondaryIcon, $"Codex 7d {s.RemainingPercent:0}% -> {s.ResetsAt.LocalDateTime:MM-dd HH:mm}");
     }
@@ -450,7 +468,7 @@ internal sealed class UsageTrayContext : ApplicationContext
     {
         if (!_settings.EnableLowUsageNotifications) return;
         var threshold = _settings.NotificationThreshold;
-        if (snapshot.Primary.RemainingPercent <= threshold && _notifiedPrimaryReset != snapshot.Primary.ResetsAt)
+        if (snapshot.HasFiveHour && snapshot.Primary.RemainingPercent <= threshold && _notifiedPrimaryReset != snapshot.Primary.ResetsAt)
         {
             _notifiedPrimaryReset = snapshot.Primary.ResetsAt;
             _primaryIcon.ShowBalloonTip(4000, "Codex 5h 用量偏低", $"剩余 {snapshot.Primary.RemainingPercent:0}%，重置时间 {snapshot.Primary.ResetsAt.LocalDateTime:MM-dd HH:mm}", ToolTipIcon.Warning);
@@ -674,12 +692,18 @@ internal sealed class UsageLogReader
                 var root = document.RootElement;
                 if (!root.TryGetProperty("type", out var type) || type.GetString() != "event_msg") continue;
                 if (!root.TryGetProperty("payload", out var payload) || !payload.TryGetProperty("rate_limits", out var limits)) continue;
-                if (!limits.TryGetProperty("primary", out var primary) || !limits.TryGetProperty("secondary", out var secondary)) continue;
-                if (primary.ValueKind != JsonValueKind.Object || secondary.ValueKind != JsonValueKind.Object) continue;
-                if (!TryReadWindow(primary, out var primaryWindow) || !TryReadWindow(secondary, out var secondaryWindow)) continue;
+                if (!limits.TryGetProperty("primary", out var primary) || primary.ValueKind != JsonValueKind.Object) continue;
+                if (!TryReadWindow(primary, out var primaryWindow)) continue;
                 var recordedAt = root.TryGetProperty("timestamp", out var timestamp) && DateTimeOffset.TryParse(timestamp.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
                     ? parsed : DateTimeOffset.UtcNow;
-                return new UsageSnapshot(primaryWindow, secondaryWindow, recordedAt);
+                if (limits.TryGetProperty("secondary", out var secondary)
+                    && secondary.ValueKind == JsonValueKind.Object
+                    && TryReadWindow(secondary, out var secondaryWindow))
+                    return new UsageSnapshot(primaryWindow, secondaryWindow, recordedAt, HasFiveHour: true);
+
+                // Newer Codex builds can emit only `primary`; its reset matches the weekly
+                // allowance shown by the official Usage page. Keep 5h explicitly unavailable.
+                return new UsageSnapshot(primaryWindow, primaryWindow, recordedAt, HasFiveHour: false);
             }
             catch (JsonException)
             {
@@ -719,7 +743,7 @@ internal readonly record struct UsageWindow(double UsedPercent, DateTimeOffset R
     public double RemainingPercent => 100 - UsedPercent;
 }
 
-internal readonly record struct UsageSnapshot(UsageWindow Primary, UsageWindow Secondary, DateTimeOffset RecordedAt);
+internal readonly record struct UsageSnapshot(UsageWindow Primary, UsageWindow Secondary, DateTimeOffset RecordedAt, bool HasFiveHour = true);
 
 internal static class TrayIconFactory
 {
@@ -774,13 +798,18 @@ internal static class TrayIconFactory
 
     public static Icon CreateNumbers(UsageSnapshot snapshot, NumericContent content, TrayDisplaySettings settings)
     {
+        if (!snapshot.HasFiveHour && content == NumericContent.FiveHour)
+            return CreateRing(0, unknown: true, settings);
+
         var primary = snapshot.Primary.RemainingPercent;
         var secondary = snapshot.Secondary.RemainingPercent;
         using var bitmap = content switch
         {
             NumericContent.FiveHour => CreateTightNumberBitmap(primary, 36f, settings),
             NumericContent.SevenDay => CreateTightNumberBitmap(secondary, 36f, settings),
-            _ => CreateStackedTightNumberBitmap(primary, secondary, settings),
+            _ => snapshot.HasFiveHour
+                ? CreateStackedTightNumberBitmap(primary, secondary, settings)
+                : CreateTightNumberBitmap(secondary, 36f, settings),
         };
         return ToIcon(bitmap);
     }
@@ -795,13 +824,18 @@ internal static class TrayIconFactory
 
     public static Icon CreateCustomOrFallback(UsageSnapshot snapshot, TrayDisplaySettings settings)
     {
+        if (!snapshot.HasFiveHour && settings.NumericContent == NumericContent.FiveHour)
+            return CreateRing(0, unknown: true, settings);
+
         var primary = snapshot.Primary.RemainingPercent;
         var secondary = snapshot.Secondary.RemainingPercent;
         using var bitmap = settings.NumericContent switch
         {
             NumericContent.FiveHour => TryLoadCustomNumber("5h", primary, settings) ?? TryLoadCustomNumber("single", primary, settings) ?? CreateTightNumberBitmap(primary, 36f, settings),
             NumericContent.SevenDay => TryLoadCustomNumber("7d", secondary, settings) ?? TryLoadCustomNumber("single", secondary, settings) ?? CreateTightNumberBitmap(secondary, 36f, settings),
-            _ => TryLoadCustomNumber("both", Math.Min(primary, secondary), settings) ?? CreateStackedTightNumberBitmap(primary, secondary, settings),
+            _ => snapshot.HasFiveHour
+                ? TryLoadCustomNumber("both", Math.Min(primary, secondary), settings) ?? CreateStackedTightNumberBitmap(primary, secondary, settings)
+                : TryLoadCustomNumber("7d", secondary, settings) ?? TryLoadCustomNumber("single", secondary, settings) ?? CreateTightNumberBitmap(secondary, 36f, settings),
         };
         return ToIcon(bitmap);
     }
@@ -823,9 +857,12 @@ internal static class TrayIconFactory
     private static Bitmap CreateNumbersBitmap(UsageSnapshot snapshot, TrayDisplaySettings settings) =>
         settings.NumericContent switch
         {
-            NumericContent.FiveHour => CreateTightNumberBitmap(snapshot.Primary.RemainingPercent, 36f, settings),
+            NumericContent.FiveHour when snapshot.HasFiveHour => CreateTightNumberBitmap(snapshot.Primary.RemainingPercent, 36f, settings),
+            NumericContent.FiveHour => CreateTightNumberBitmap(snapshot.Secondary.RemainingPercent, 36f, settings),
             NumericContent.SevenDay => CreateTightNumberBitmap(snapshot.Secondary.RemainingPercent, 36f, settings),
-            _ => CreateStackedTightNumberBitmap(snapshot.Primary.RemainingPercent, snapshot.Secondary.RemainingPercent, settings),
+            _ => snapshot.HasFiveHour
+                ? CreateStackedTightNumberBitmap(snapshot.Primary.RemainingPercent, snapshot.Secondary.RemainingPercent, settings)
+                : CreateTightNumberBitmap(snapshot.Secondary.RemainingPercent, 36f, settings),
         };
 
     private static Bitmap? TryLoadCustomNumber(string bucket, double remainingPercent, TrayDisplaySettings settings)

@@ -1,6 +1,6 @@
 {
   "name": "codex-usage-tray",
-  "version": "0.1.0+codex.20260713031426",
+  "version": "0.1.0+codex.20260713032028",
   "description": "Windows notification-area monitor for locally recorded Codex usage limits, with dual large-number tray icons, notifications, custom styles, and configurable thresholds.",
   "author": {
     "name": "Local developer"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Codex Usage Tray",
     "shortDescription": "Monitor Codex usage limits with clear tray icons.",
-    "longDescription": "A local Windows tray companion that reads the latest Codex session usage snapshot and shows the 5-hour and weekly limit status without sending account data anywhere. It includes dual large-number tray icons, icon style modes, low-usage notifications, richer menu actions, compact tooltips, custom assets, and configurable thresholds/colors.",
+    "longDescription": "A local Windows tray companion that reads the latest Codex session usage snapshot and shows available 5-hour and weekly limit status without sending account data anywhere. It supports both dual-window and newer weekly-only snapshots, plus large-number tray icons, icon style modes, low-usage notifications, richer menu actions, compact tooltips, custom assets, and configurable thresholds/colors.",
     "developerName": "Local developer",
     "category": "Productivity",
     "capabilities": [

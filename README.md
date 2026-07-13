@@ -7,11 +7,18 @@ It reads recent `%USERPROFILE%\.codex\sessions\**\*.jsonl` events that contain `
 ## Features
 
 - Dual large-number tray mode: one tray icon for 5-hour remaining usage and one tray icon for 7-day remaining usage.
+- Supports newer primary-only Codex snapshots: the single value is treated as the weekly limit, while 5-hour usage is shown as unavailable instead of reusing stale data.
 - More icon styles: ring, single numeric icon, dual numeric icons, battery bar, and custom PNG assets.
 - Low-usage notifications when either usage window drops below the configured threshold.
 - Enhanced right-click menu: startup toggle, config file, diagnostics log, assets folder, sessions folder, refresh, reload config, and reset settings.
 - Compact tooltip modes for clearer hover text within Windows tray limits.
 - Configurable thresholds, colors, font, tooltip mode, notification threshold, and custom asset directory.
+
+## Codex data format compatibility
+
+Codex Usage Tray reads local `payload.rate_limits` events. Older Codex builds usually recorded both `primary` (5-hour) and `secondary` (weekly) windows. Newer builds may record only `primary`, with a reset time that matches the weekly limit shown in the official Usage page.
+
+When only one window is available, the tray treats it as the weekly limit, displays one weekly percentage, and marks 5-hour usage as unavailable. This prevents an expired 5-hour snapshot from being shown as current data. The official Usage page remains the source of truth because this companion does not use account credentials or private APIs.
 
 ## Build and install
 
