@@ -45,6 +45,7 @@ internal sealed class UsageTrayContext : ApplicationContext
 {
     private const int RefreshIntervalMs = 30_000;
     private const string StartupName = "CodexUsageTray";
+    private static readonly TimeSpan MaxSnapshotAge = TimeSpan.FromHours(6);
     private static readonly string DiagnosticsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "CodexUsageTray",
@@ -293,6 +294,13 @@ internal sealed class UsageTrayContext : ApplicationContext
             }
 
             var current = snapshot.Value;
+            if (IsStaleSnapshot(current, out var staleReason))
+            {
+                LogDiagnostic($"stale snapshot ignored: {staleReason}; recorded={current.RecordedAt:O}; 5hReset={current.Primary.ResetsAt:O}; 7dReset={current.Secondary.ResetsAt:O}");
+                ShowUnavailable(staleReason);
+                return;
+            }
+
             _lastSnapshot = current;
             _primaryItem.Text = FormatWindow("5h", current.Primary);
             _secondaryItem.Text = FormatWindow("7d", current.Secondary);
@@ -311,6 +319,26 @@ internal sealed class UsageTrayContext : ApplicationContext
             LogDiagnostic($"read failed: {ex}");
             ShowUnavailable($"Read failed: {ex.Message}");
         }
+    }
+
+    private static bool IsStaleSnapshot(UsageSnapshot snapshot, out string reason)
+    {
+        var now = DateTimeOffset.Now;
+        var age = now - snapshot.RecordedAt.ToLocalTime();
+        if (snapshot.Primary.ResetsAt <= now)
+        {
+            reason = $"Latest local 5h snapshot expired at {snapshot.Primary.ResetsAt.LocalDateTime:MM-dd HH:mm}";
+            return true;
+        }
+
+        if (age > MaxSnapshotAge)
+        {
+            reason = $"Latest local usage snapshot is stale ({snapshot.RecordedAt.LocalDateTime:MM-dd HH:mm})";
+            return true;
+        }
+
+        reason = string.Empty;
+        return false;
     }
 
     private void InitializeSessionWatcher()
@@ -623,15 +651,17 @@ internal sealed class UsageLogReader
     {
         if (!Directory.Exists(_sessionsPath)) return null;
 
+        UsageSnapshot? latest = null;
         foreach (var file in Directory.EnumerateFiles(_sessionsPath, "*.jsonl", SearchOption.AllDirectories)
                      .Select(path => new FileInfo(path))
                      .OrderByDescending(file => file.LastWriteTimeUtc)
                      .Take(MaxFilesToInspect))
         {
             var snapshot = FindLatestSnapshot(file.FullName);
-            if (snapshot is not null) return snapshot;
+            if (snapshot is not null && (latest is null || snapshot.Value.RecordedAt > latest.Value.RecordedAt))
+                latest = snapshot;
         }
-        return null;
+        return latest;
     }
 
     private static UsageSnapshot? FindLatestSnapshot(string path)
