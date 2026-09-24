@@ -14,6 +14,9 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        using var singleInstance = new Mutex(initiallyOwned: true, name: @"Local\CodexUsageTray", createdNew: out var createdNew);
+        if (!createdNew) return;
+
         ApplicationConfiguration.Initialize();
         Application.Run(new UsageTrayContext());
     }
@@ -815,8 +818,15 @@ internal sealed class CodexActivityReader
         if (!Directory.Exists(_sessionsPath)) return 0;
         var latestActiveWrite = DateTimeOffset.MinValue;
         var activeTaskCount = 0;
-        var recentDirectories = Enumerable.Range(0, 2)
-            .Select(daysAgo => DateTime.UtcNow.Date.AddDays(-daysAgo))
+        var scanDates = new[]
+            {
+                DateTime.Now.Date,
+                DateTime.Now.Date.AddDays(-1),
+                DateTime.UtcNow.Date,
+                DateTime.UtcNow.Date.AddDays(-1),
+            }
+            .Distinct();
+        var recentDirectories = scanDates
             .Select(date => Path.Combine(_sessionsPath, date.ToString("yyyy"), date.ToString("MM"), date.ToString("dd")))
             .Where(Directory.Exists);
         var recentFiles = recentDirectories.SelectMany(directory => Directory.EnumerateFiles(directory, "*.jsonl", SearchOption.TopDirectoryOnly));
@@ -913,11 +923,12 @@ internal static class TrayIconFactory
         var height = working && !pulseOn ? 2 : 4;
         var x = aboveNumber ? (bitmap.Width - width) / 2 : bitmap.Width - width;
         const int y = 1;
-        using (var graphics = Graphics.FromImage(bitmap))
+        if (!working || pulseOn)
         {
+            using var graphics = Graphics.FromImage(bitmap);
             graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
             var color = working
-                ? (pulseOn ? Color.FromArgb(255, 163, 55) : Color.FromArgb(88, 42, 8))
+                ? Color.FromArgb(255, 163, 55)
                 : linked ? Color.FromArgb(65, 220, 125) : Color.FromArgb(135, 142, 153);
             using var indicator = new SolidBrush(color);
             graphics.FillRectangle(indicator, x, y, width, height);
