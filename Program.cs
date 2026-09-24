@@ -378,7 +378,7 @@ internal sealed class UsageTrayContext : ApplicationContext
             _isWorking = working;
             _activeTaskCount = activeTaskCount;
             if (working)
-                _indicatorTimer.Interval = activeTaskCount switch { 1 => 500, 2 => 375, _ => 250 };
+                _indicatorTimer.Interval = activeTaskCount switch { 1 => 1_000, 2 => 500, _ => 250 };
             _indicatorOn = true;
             if (_lastSnapshot is { } snapshot) UpdateTooltips(snapshot);
             else SetNotifyText(_primaryIcon, working ? "Codex WORKING" : "Codex NO LINK");

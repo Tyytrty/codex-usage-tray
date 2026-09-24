@@ -7,7 +7,7 @@ It reads local `%USERPROFILE%\.codex\sessions` logs. It does not read `auth.json
 ## Features
 
 - Two side-by-side tray icons show the 5-hour and 7-day remaining usage.
-- A short status dash above the 5-hour number blinks orange while Codex tasks are active (1 task: 1-second cycle; 2: 0.75-second; 3 or more: 0.5-second), stays green when connected and idle, and turns gray when usage data is unavailable. It leaves room for the original large, aligned usage numbers.
+- A short status dash above the 5-hour number blinks orange while Codex tasks are active (1 task: 2-second cycle; 2: 1-second; 3 or more: 0.5-second), stays green when connected and idle, and turns gray when usage data is unavailable. It leaves room for the original large, aligned usage numbers.
 - Activity comes from local `task_started` / `task_complete` events, independently of rate-limit snapshot updates.
 - Supports newer primary-only Codex snapshots: the single value is treated as the weekly limit, while 5-hour usage is shown as unavailable instead of reusing stale data.
 - More icon styles: ring, single numeric icon, stacked numbers in one icon, battery bar, and custom PNG assets.
