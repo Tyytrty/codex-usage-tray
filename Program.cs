@@ -902,8 +902,10 @@ internal static class TrayIconFactory
     public static Icon WithActivityIndicator(Icon source, bool working, bool linked, bool pulseOn, bool aboveNumber = false)
     {
         using var bitmap = source.ToBitmap();
-        var maxWidth = aboveNumber ? 16 : 8;
-        var width = working && !pulseOn ? Math.Max(6, maxWidth - 6) : maxWidth;
+        var baseWidth = aboveNumber ? 16 : 8;
+        var maxWidth = baseWidth * 3 / 2;
+        var dimWidth = Math.Max(6, (int)Math.Round(Math.Max(2, baseWidth - 6) * 1.5));
+        var width = working && !pulseOn ? dimWidth : maxWidth;
         var height = working && !pulseOn ? 3 : 4;
         var x = aboveNumber ? (bitmap.Width - width) / 2 : bitmap.Width - width;
         const int y = 1;
