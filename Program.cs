@@ -370,6 +370,8 @@ internal sealed class UsageTrayContext : ApplicationContext
             var working = activeTaskCount > 0;
             var stateChanged = working != _isWorking;
             var taskCountChanged = activeTaskCount != _activeTaskCount;
+            if (stateChanged || taskCountChanged)
+                LogDiagnostic($"activity changed: {(working ? $"WORKING ({activeTaskCount})" : "IDLE")}");
             _activityItem.Text = working
                 ? $"Codex activity: WORKING ({activeTaskCount})"
                 : _lastSnapshot is null ? "Codex activity: NO LINK" : "Codex activity: idle";
@@ -906,16 +908,16 @@ internal static class TrayIconFactory
         using var bitmap = source.ToBitmap();
         var baseWidth = aboveNumber ? 16 : 8;
         var maxWidth = baseWidth * 3 / 2;
-        var dimWidth = Math.Max(6, (int)Math.Round(Math.Max(2, baseWidth - 6) * 1.5));
+        var dimWidth = Math.Max(4, baseWidth / 2);
         var width = working && !pulseOn ? dimWidth : maxWidth;
-        var height = working && !pulseOn ? 3 : 4;
+        var height = working && !pulseOn ? 2 : 4;
         var x = aboveNumber ? (bitmap.Width - width) / 2 : bitmap.Width - width;
         const int y = 1;
         using (var graphics = Graphics.FromImage(bitmap))
         {
             graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
             var color = working
-                ? (pulseOn ? Color.FromArgb(255, 163, 55) : Color.FromArgb(166, 82, 17))
+                ? (pulseOn ? Color.FromArgb(255, 163, 55) : Color.FromArgb(88, 42, 8))
                 : linked ? Color.FromArgb(65, 220, 125) : Color.FromArgb(135, 142, 153);
             using var indicator = new SolidBrush(color);
             graphics.FillRectangle(indicator, x, y, width, height);
