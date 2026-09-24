@@ -818,26 +818,17 @@ internal sealed class CodexActivityReader
         if (!Directory.Exists(_sessionsPath)) return 0;
         var latestActiveWrite = DateTimeOffset.MinValue;
         var activeTaskCount = 0;
-        var scanDates = new[]
-            {
-                DateTime.Now.Date,
-                DateTime.Now.Date.AddDays(-1),
-                DateTime.UtcNow.Date,
-                DateTime.UtcNow.Date.AddDays(-1),
-            }
-            .Distinct();
-        var recentDirectories = scanDates
-            .Select(date => Path.Combine(_sessionsPath, date.ToString("yyyy"), date.ToString("MM"), date.ToString("dd")))
-            .Where(Directory.Exists);
-        var recentFiles = recentDirectories.SelectMany(directory => Directory.EnumerateFiles(directory, "*.jsonl", SearchOption.TopDirectoryOnly));
+        var now = DateTimeOffset.UtcNow;
+        var recentFiles = Directory.EnumerateFiles(_sessionsPath, "*.jsonl", SearchOption.AllDirectories)
+            .Select(path => new FileInfo(path))
+            .Where(file => now - new DateTimeOffset(file.LastWriteTimeUtc, TimeSpan.Zero) <= RecentWindow)
+            .OrderByDescending(file => file.LastWriteTimeUtc)
+            .Take(MaxRecentSessions);
 
-        foreach (var file in recentFiles.Select(path => new FileInfo(path))
-                     .OrderByDescending(info => info.LastWriteTimeUtc)
-                     .Take(MaxRecentSessions))
+        foreach (var file in recentFiles)
         {
             var writeTime = new DateTimeOffset(file.LastWriteTimeUtc, TimeSpan.Zero);
-            var age = DateTimeOffset.UtcNow - writeTime;
-            if (age > RecentWindow) continue;
+            var age = now - writeTime;
             if (ReadLastTurnEvent(file.FullName, file.Length) != "task_started") continue;
             if (age <= ActiveWindow)
             {
