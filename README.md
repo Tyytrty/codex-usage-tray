@@ -1,14 +1,16 @@
 # Codex Usage Tray
 
-A local Windows notification-area companion for Codex usage snapshots.
+A local Windows notification-area companion for Codex usage snapshots and task activity.
 
-It reads recent `%USERPROFILE%\.codex\sessions\**\*.jsonl` events that contain `payload.rate_limits`. It does not read `auth.json`, call private APIs, or upload data.
+It reads local `%USERPROFILE%\.codex\sessions` logs. It does not read `auth.json`, call private APIs, or upload data.
 
 ## Features
 
-- Dual large-number tray mode: one tray icon for 5-hour remaining usage and one tray icon for 7-day remaining usage.
+- Two side-by-side tray icons show the 5-hour and 7-day remaining usage.
+- A short status dash above the 5-hour number blinks orange while Codex tasks are active (1 task: 1-second cycle; 2: 0.75-second; 3 or more: 0.5-second), stays green when connected and idle, and turns gray when usage data is unavailable. It leaves room for the original large, aligned usage numbers.
+- Activity comes from local `task_started` / `task_complete` events, independently of rate-limit snapshot updates.
 - Supports newer primary-only Codex snapshots: the single value is treated as the weekly limit, while 5-hour usage is shown as unavailable instead of reusing stale data.
-- More icon styles: ring, single numeric icon, dual numeric icons, battery bar, and custom PNG assets.
+- More icon styles: ring, single numeric icon, stacked numbers in one icon, battery bar, and custom PNG assets.
 - Low-usage notifications when either usage window drops below the configured threshold.
 - Enhanced right-click menu: startup toggle, config file, diagnostics log, assets folder, sessions folder, refresh, reload config, and reset settings.
 - Compact tooltip modes for clearer hover text within Windows tray limits.
@@ -68,7 +70,7 @@ Useful settings:
 
 Enum values:
 
-- `IconMode`: `0` ring, `1` single numbers, `2` dual large numbers, `3` battery, `4` custom assets.
+- `IconMode`: `0` ring, `1` single numbers, `2` separate 5-hour and 7-day numbers, `3` battery, `4` custom assets.
 - `NumericContent`: `0` 5-hour, `1` 7-day, `2` both.
 - `TooltipMode`: `0` short, `1` detailed.
 

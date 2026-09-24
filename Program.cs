@@ -56,6 +56,7 @@ internal sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _primaryItem = new("5h: loading") { Enabled = false };
     private readonly ToolStripMenuItem _secondaryItem = new("7d: loading") { Enabled = false };
     private readonly ToolStripMenuItem _updatedItem = new("Last updated: loading") { Enabled = false };
+    private readonly ToolStripMenuItem _activityItem = new("Codex activity: idle") { Enabled = false };
     private readonly ToolStripMenuItem _ringItem = new("圆环");
     private readonly ToolStripMenuItem _numbersItem = new("单图标数字");
     private readonly ToolStripMenuItem _dualNumbersItem = new("双托盘大数字");
@@ -70,14 +71,20 @@ internal sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _startupItem = new("开机自启动");
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = RefreshIntervalMs };
     private readonly System.Windows.Forms.Timer _refreshDebounceTimer = new() { Interval = 1_000 };
+    private readonly System.Windows.Forms.Timer _activityTimer = new() { Interval = 2_000 };
+    private readonly System.Windows.Forms.Timer _indicatorTimer = new() { Interval = 500 };
     private readonly SynchronizationContext _uiContext;
     private readonly UsageLogReader _reader = new();
+    private readonly CodexActivityReader _activityReader = new();
     private readonly TrayDisplaySettings _settings;
     private FileSystemWatcher? _sessionWatcher;
     private UsageSnapshot? _lastSnapshot;
     private DateTimeOffset? _lastLoggedRecordedAt;
     private DateTimeOffset? _notifiedPrimaryReset;
     private DateTimeOffset? _notifiedSecondaryReset;
+    private bool _isWorking;
+    private int _activeTaskCount;
+    private bool _indicatorOn = true;
 
     public UsageTrayContext()
     {
@@ -103,6 +110,12 @@ internal sealed class UsageTrayContext : ApplicationContext
         _primaryIcon.DoubleClick += (_, _) => RefreshUsage();
         _secondaryIcon.DoubleClick += (_, _) => RefreshUsage();
         _timer.Tick += (_, _) => RefreshUsage();
+        _activityTimer.Tick += (_, _) => RefreshActivity();
+        _indicatorTimer.Tick += (_, _) =>
+        {
+            _indicatorOn = !_indicatorOn;
+            if (_isWorking) RefreshDisplayedIcon();
+        };
         _refreshDebounceTimer.Tick += (_, _) =>
         {
             _refreshDebounceTimer.Stop();
@@ -112,7 +125,10 @@ internal sealed class UsageTrayContext : ApplicationContext
         SystemEvents.SessionSwitch += OnSessionSwitch;
         InitializeSessionWatcher();
         _timer.Start();
+        _activityTimer.Start();
+        _indicatorTimer.Start();
         LogDiagnostic("started");
+        RefreshActivity();
         RefreshUsage();
     }
 
@@ -145,6 +161,7 @@ internal sealed class UsageTrayContext : ApplicationContext
         var menuFont = SystemFonts.MenuFont ?? SystemFonts.DefaultFont;
         menu.Items.Add(new ToolStripMenuItem("Codex Usage Tray") { Enabled = false, Font = new Font(menuFont, FontStyle.Bold) });
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(_activityItem);
         menu.Items.Add(_primaryItem);
         menu.Items.Add(_secondaryItem);
         menu.Items.Add(_updatedItem);
@@ -345,6 +362,41 @@ internal sealed class UsageTrayContext : ApplicationContext
         return false;
     }
 
+    private void RefreshActivity()
+    {
+        try
+        {
+            var activeTaskCount = _activityReader.GetActiveTaskCount();
+            var working = activeTaskCount > 0;
+            var stateChanged = working != _isWorking;
+            var taskCountChanged = activeTaskCount != _activeTaskCount;
+            _activityItem.Text = working
+                ? $"Codex activity: WORKING ({activeTaskCount})"
+                : _lastSnapshot is null ? "Codex activity: NO LINK" : "Codex activity: idle";
+            if (!stateChanged && !taskCountChanged) return;
+
+            _isWorking = working;
+            _activeTaskCount = activeTaskCount;
+            if (working)
+                _indicatorTimer.Interval = activeTaskCount switch { 1 => 500, 2 => 375, _ => 250 };
+            _indicatorOn = true;
+            if (_lastSnapshot is { } snapshot) UpdateTooltips(snapshot);
+            else SetNotifyText(_primaryIcon, working ? "Codex WORKING" : "Codex NO LINK");
+            RefreshDisplayedIcon();
+        }
+        catch (Exception ex)
+        {
+            LogDiagnostic($"activity read failed: {ex.Message}");
+            _activityItem.Text = "Codex activity: unavailable";
+        }
+    }
+
+    private void RefreshDisplayedIcon()
+    {
+        if (_lastSnapshot is { } snapshot) UpdateIcon(snapshot);
+        else ReplaceIcon(_primaryIcon, TrayIconFactory.CreateRing(0, unknown: true, _settings));
+    }
+
     private void InitializeSessionWatcher()
     {
         try
@@ -442,10 +494,14 @@ internal sealed class UsageTrayContext : ApplicationContext
         }
     }
 
-    private static void ReplaceIcon(NotifyIcon notifyIcon, Icon icon)
+    private void ReplaceIcon(NotifyIcon notifyIcon, Icon icon)
     {
+        var decorated = ReferenceEquals(notifyIcon, _primaryIcon)
+            ? TrayIconFactory.WithActivityIndicator(icon, _isWorking, _lastSnapshot is not null, _indicatorOn, aboveNumber: _settings.IconMode == IconDisplayMode.DualNumbers)
+            : icon;
+        if (!ReferenceEquals(decorated, icon)) icon.Dispose();
         var previous = notifyIcon.Icon;
-        notifyIcon.Icon = icon;
+        notifyIcon.Icon = decorated;
         previous?.Dispose();
     }
 
@@ -453,13 +509,14 @@ internal sealed class UsageTrayContext : ApplicationContext
     {
         var p = snapshot.Primary;
         var s = snapshot.Secondary;
+        var activityText = _isWorking ? $"WORKING x{_activeTaskCount}" : "IDLE";
         var text = snapshot.HasFiveHour
             ? (_settings.TooltipMode == TooltipMode.Short
-                ? $"Codex 5h {p.RemainingPercent:0}% | 7d {s.RemainingPercent:0}%"
-                : $"5h {p.RemainingPercent:0}% -> {p.ResetsAt.LocalDateTime:MM-dd HH:mm}; 7d {s.RemainingPercent:0}% -> {s.ResetsAt.LocalDateTime:MM-dd HH:mm}")
+                ? $"{activityText} | 5h {p.RemainingPercent:0}% | 7d {s.RemainingPercent:0}%"
+                : $"{(_isWorking ? "Working" : "Idle")} | 5h {p.RemainingPercent:0}%>{p.ResetsAt.LocalDateTime:MM-dd HH:mm} | 7d {s.RemainingPercent:0}%>{s.ResetsAt.LocalDateTime:MM-dd HH:mm}")
             : (_settings.TooltipMode == TooltipMode.Short
-                ? $"Codex 7d {s.RemainingPercent:0}% (5h unavailable)"
-                : $"7d {s.RemainingPercent:0}% -> {s.ResetsAt.LocalDateTime:MM-dd HH:mm}; 5h unavailable");
+                ? $"{activityText} | 7d {s.RemainingPercent:0}% | 5h n/a"
+                : $"{(_isWorking ? "Working" : "Idle")} | 7d {s.RemainingPercent:0}%>{s.ResetsAt.LocalDateTime:MM-dd HH:mm} | 5h n/a");
         SetNotifyText(_primaryIcon, text);
         SetNotifyText(_secondaryIcon, $"Codex 7d {s.RemainingPercent:0}% -> {s.ResetsAt.LocalDateTime:MM-dd HH:mm}");
     }
@@ -483,10 +540,12 @@ internal sealed class UsageTrayContext : ApplicationContext
     private void ShowUnavailable(string reason)
     {
         LogDiagnostic($"unavailable: {reason}");
+        _lastSnapshot = null;
+        _activityItem.Text = _isWorking ? "Codex activity: WORKING" : "Codex activity: NO LINK";
         _primaryItem.Text = "5h: --";
         _secondaryItem.Text = "7d: --";
         _updatedItem.Text = reason;
-        SetNotifyText(_primaryIcon, "Codex usage: no local data");
+        SetNotifyText(_primaryIcon, _isWorking ? "WORKING | usage unavailable" : "NO LINK | usage unavailable");
         SetNotifyText(_secondaryIcon, "Codex 7d: no local data");
         _secondaryIcon.Visible = false;
         ReplaceIcon(_primaryIcon, TrayIconFactory.CreateRing(0, unknown: true, _settings));
@@ -738,6 +797,99 @@ internal sealed class UsageLogReader
     }
 }
 
+internal sealed class CodexActivityReader
+{
+    private static readonly TimeSpan ActiveWindow = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan RecentWindow = TimeSpan.FromMinutes(20);
+    private const int MaxRecentSessions = 150;
+    private readonly string _sessionsPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "sessions");
+    private readonly Dictionary<string, CachedTurnState> _turnStates = new(StringComparer.OrdinalIgnoreCase);
+
+    public int GetActiveTaskCount()
+    {
+        if (!Directory.Exists(_sessionsPath)) return 0;
+        var latestActiveWrite = DateTimeOffset.MinValue;
+        var activeTaskCount = 0;
+        var recentDirectories = Enumerable.Range(0, 2)
+            .Select(daysAgo => DateTime.UtcNow.Date.AddDays(-daysAgo))
+            .Select(date => Path.Combine(_sessionsPath, date.ToString("yyyy"), date.ToString("MM"), date.ToString("dd")))
+            .Where(Directory.Exists);
+        var recentFiles = recentDirectories.SelectMany(directory => Directory.EnumerateFiles(directory, "*.jsonl", SearchOption.TopDirectoryOnly));
+
+        foreach (var file in recentFiles.Select(path => new FileInfo(path))
+                     .OrderByDescending(info => info.LastWriteTimeUtc)
+                     .Take(MaxRecentSessions))
+        {
+            var writeTime = new DateTimeOffset(file.LastWriteTimeUtc, TimeSpan.Zero);
+            var age = DateTimeOffset.UtcNow - writeTime;
+            if (age > RecentWindow) continue;
+            if (ReadLastTurnEvent(file.FullName, file.Length) != "task_started") continue;
+            if (age <= ActiveWindow)
+            {
+                activeTaskCount++;
+                if (writeTime > latestActiveWrite) latestActiveWrite = writeTime;
+            }
+        }
+
+        return latestActiveWrite != DateTimeOffset.MinValue ? activeTaskCount : 0;
+    }
+
+    private string? ReadLastTurnEvent(string path, long fileLength)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (_turnStates.TryGetValue(path, out var cached) && fileLength >= cached.Length)
+            {
+                if (fileLength == cached.Length) return cached.LastEvent;
+                var start = Math.Max(0, cached.Length - 8192);
+                stream.Seek(start, SeekOrigin.Begin);
+                using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+                var lastEvent = cached.LastEvent;
+                string? line;
+                while ((line = reader.ReadLine()) is not null)
+                {
+                    var parsed = TryGetTurnEvent(line);
+                    if (parsed is not null) lastEvent = parsed;
+                }
+                _turnStates[path] = new CachedTurnState(fileLength, lastEvent);
+                return lastEvent;
+            }
+
+            stream.Seek(0, SeekOrigin.Begin);
+            using var fullReader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+            string? fullLine;
+            string? latest = null;
+            while ((fullLine = fullReader.ReadLine()) is not null)
+            {
+                var parsed = TryGetTurnEvent(fullLine);
+                if (parsed is not null) latest = parsed;
+            }
+            _turnStates[path] = new CachedTurnState(fileLength, latest);
+            return latest;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    private static string? TryGetTurnEvent(string line)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(line);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("type", out var type) || type.GetString() != "event_msg") return null;
+            if (!root.TryGetProperty("payload", out var payload) || !payload.TryGetProperty("type", out var eventType)) return null;
+            var value = eventType.GetString();
+            return value is "task_started" or "task_complete" or "turn_aborted" ? value : null;
+        }
+        catch (JsonException) { return null; }
+    }
+
+    private readonly record struct CachedTurnState(long Length, string? LastEvent);
+}
+
 internal readonly record struct UsageWindow(double UsedPercent, DateTimeOffset ResetsAt)
 {
     public double RemainingPercent => 100 - UsedPercent;
@@ -747,6 +899,26 @@ internal readonly record struct UsageSnapshot(UsageWindow Primary, UsageWindow S
 
 internal static class TrayIconFactory
 {
+    public static Icon WithActivityIndicator(Icon source, bool working, bool linked, bool pulseOn, bool aboveNumber = false)
+    {
+        using var bitmap = source.ToBitmap();
+        var maxWidth = aboveNumber ? 16 : 8;
+        var width = working && !pulseOn ? Math.Max(6, maxWidth - 6) : maxWidth;
+        var height = working && !pulseOn ? 3 : 4;
+        var x = aboveNumber ? (bitmap.Width - width) / 2 : bitmap.Width - width;
+        const int y = 1;
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            var color = working
+                ? (pulseOn ? Color.FromArgb(255, 163, 55) : Color.FromArgb(166, 82, 17))
+                : linked ? Color.FromArgb(65, 220, 125) : Color.FromArgb(135, 142, 153);
+            using var indicator = new SolidBrush(color);
+            graphics.FillRectangle(indicator, x, y, width, height);
+        }
+        return ToIcon(bitmap);
+    }
+
     public static Icon CreateRing(double remainingPercent, bool unknown, TrayDisplaySettings settings)
     {
         var color = GetColor(remainingPercent, unknown, settings);
@@ -846,11 +1018,11 @@ internal static class TrayIconFactory
         var secondary = (int)Math.Round(Math.Clamp(snapshot.Secondary.RemainingPercent, 0, 100));
         var primaryText = primary.ToString(CultureInfo.InvariantCulture);
         var secondaryText = secondary.ToString(CultureInfo.InvariantCulture);
-        var area = new RectangleF(-1, -2, 50, 52);
-        var fontSize = FindSharedSingleFontSize(primaryText, secondaryText, area, settings);
+        var numberArea = new RectangleF(-1, -2, 50, 52);
+        var fontSize = FindSharedSingleFontSize(primaryText, secondaryText, numberArea, settings);
 
-        using var primaryBitmap = CreateFixedNumberBitmap(primaryText, GetColor(primary, unknown: false, settings), fontSize, area, settings);
-        using var secondaryBitmap = CreateFixedNumberBitmap(secondaryText, GetColor(secondary, unknown: false, settings), fontSize, area, settings);
+        using var primaryBitmap = CreateFixedNumberBitmap(primaryText, GetColor(primary, unknown: false, settings), fontSize, numberArea, settings);
+        using var secondaryBitmap = CreateFixedNumberBitmap(secondaryText, GetColor(secondary, unknown: false, settings), fontSize, numberArea, settings);
         return (ToIcon(primaryBitmap), ToIcon(secondaryBitmap));
     }
 
@@ -923,8 +1095,10 @@ internal static class TrayIconFactory
         var secondary = (int)Math.Round(Math.Clamp(secondaryPercent, 0, 100));
         var primaryText = primary.ToString(CultureInfo.InvariantCulture);
         var secondaryText = secondary.ToString(CultureInfo.InvariantCulture);
-        var topArea = new RectangleF(-1, -3, width + 2, 24);
-        var bottomArea = new RectangleF(-1, 27, width + 2, 24);
+        // Reserve a narrow right-side gutter for the animated work pixel in one-icon mode.
+        var digitWidth = width - 11;
+        var topArea = new RectangleF(0, -3, digitWidth, 24);
+        var bottomArea = new RectangleF(0, 27, digitWidth, 24);
         var fontSize = FindSharedStackedFontSize(primaryText, secondaryText, topArea, settings);
         var bitmap = new Bitmap(width, height);
         using var graphics = Graphics.FromImage(bitmap);
