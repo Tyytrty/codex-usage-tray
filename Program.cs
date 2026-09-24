@@ -799,8 +799,10 @@ internal sealed class UsageLogReader
 
 internal sealed class CodexActivityReader
 {
-    private static readonly TimeSpan ActiveWindow = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan RecentWindow = TimeSpan.FromMinutes(20);
+    // Long Codex tasks can go several hours without updating their rollout file.
+    // Keep counting a session while its latest lifecycle event is task_started.
+    private static readonly TimeSpan ActiveWindow = TimeSpan.FromHours(12);
+    private static readonly TimeSpan RecentWindow = TimeSpan.FromHours(24);
     private const int MaxRecentSessions = 150;
     private readonly string _sessionsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "sessions");
